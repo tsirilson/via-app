@@ -24,7 +24,7 @@ minimizing it hides it to the system tray; on macOS it lives in the menu bar
 | OS | File | Notes |
 |----|------|-------|
 | Windows | `Keyboard-Lighting-<version>-win-x64.exe` | Unsigned: SmartScreen shows "Windows protected your PC" → **More info → Run anyway**. |
-| macOS | `Keyboard-Lighting-<version>-mac-arm64.dmg` (Apple Silicon) or `-x64.dmg` (Intel) | Not notarized: the first time, right-click the app → **Open**, or allow it in **System Settings → Privacy & Security**. |
+| macOS | `Keyboard-Lighting-<version>-mac-arm64.dmg` (Apple Silicon) or `-x64.dmg` (Intel) | Not notarized yet, so macOS says it "could not verify" the app. Try to open it once, click **Done**, then go to **System Settings → Privacy & Security**, click **Open Anyway** next to Keyboard Lighting and confirm. |
 | Linux | `.deb` (Debian/Ubuntu) or `.AppImage` | The `.deb` installs a udev rule so the app can access keyboards. For the AppImage, add it yourself (below). On Ubuntu 24.04+ the AppImage may need `--no-sandbox` (the `.deb` doesn't). GNOME needs the AppIndicator extension for the tray icon. |
 
 Linux keyboard access for the AppImage (one time):
