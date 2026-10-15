@@ -1,0 +1,6 @@
+{
+  "comment": "Definitions shipped with the app, keyed by VPID (vendorId * 65536 + productId, decimal). Used before VIA's hosted library.",
+  "definitions": {
+    "875823744": {"file": "34340280.json", "note": "Keychron K8 Pro ANSI RGB - Keychron's v3 definition (VIA hosts only v2)"}
+  }
+}

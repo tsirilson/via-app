@@ -1,0 +1,6 @@
+node_modules/
+dist/
+release/
+build/icons/*.png
+!build/icons/icon.png
+*.log

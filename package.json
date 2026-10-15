@@ -1,0 +1,23 @@
+{
+  "name": "via-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@the-via/reader": "^1.14.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/w3c-web-hid": "^1.0.7",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
+  }
+}
