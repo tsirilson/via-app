@@ -1,7 +1,7 @@
 {
   "name": "via-app",
   "productName": "Keyboard Lighting",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Control the lighting on QMK/VIA keyboards",
   "author": {
     "name": "David Tsirilson",
