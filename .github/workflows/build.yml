@@ -1,0 +1,76 @@
+name: Build installers
+
+# Runs the tests, builds installers for Windows, macOS and Linux, and smoke-tests
+# each packaged app against the simulated keyboard. Pushing a tag like v0.2.0
+# also publishes the installers as a GitHub Release.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+            smoke: release/win-unpacked/Keyboard Lighting.exe
+          - os: macos-latest
+            target: --mac
+            smoke: release/mac-arm64/Keyboard Lighting.app/Contents/MacOS/Keyboard Lighting
+          - os: ubuntu-latest
+            target: --linux
+            smoke: release/linux-unpacked/via-app
+    runs-on: ${{ matrix.os }}
+    env:
+      # No signing certificates yet; builds are unsigned (macOS: ad-hoc).
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx electron-builder ${{ matrix.target }} --publish never
+
+      - name: Smoke test (Windows / macOS)
+        if: runner.os != 'Linux'
+        run: node scripts/smoke.mjs "${{ matrix.smoke }}"
+      - name: Smoke test (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke.mjs "${{ matrix.smoke }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ runner.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: installers/*
+          draft: true

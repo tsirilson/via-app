@@ -1,23 +1,105 @@
 {
   "name": "via-app",
-  "private": true,
+  "productName": "Keyboard Lighting",
   "version": "0.1.0",
+  "description": "Control the lighting on QMK/VIA keyboards",
+  "author": {
+    "name": "David Tsirilson",
+    "email": "tsirilson@gmail.com"
+  },
+  "homepage": "https://github.com/tsirilson/via-app",
+  "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@the-via/reader": "^1.14.4"
+    "typecheck": "tsc --noEmit",
+    "icon": "node scripts/make-icon.mjs",
+    "electron:dev": "npm run build && electron .",
+    "electron:smoke": "npm run build && node scripts/smoke.mjs",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:linux:docker": "npm run build && node scripts/build-linux-docker.mjs"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@the-via/reader": "^1.14.4",
     "@types/node": "^26.6.5",
     "@types/w3c-web-hid": "^1.0.7",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.4"
+  },
+  "build": {
+    "appId": "io.github.tsirilson.keyboard-lighting",
+    "productName": "Keyboard Lighting",
+    "artifactName": "Keyboard-Lighting-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "icon": "build/icons/icon.png",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "identity": "-"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "maintainer": "David Tsirilson <tsirilson@gmail.com>",
+      "synopsis": "Control the lighting on QMK/VIA keyboards"
+    },
+    "deb": {
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh"
+    }
   }
 }
