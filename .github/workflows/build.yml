@@ -26,7 +26,7 @@ jobs:
             smoke: release/win-unpacked/Keyboard Lighting.exe
           - os: macos-latest
             target: --mac
-            smoke: release/mac-arm64/Keyboard Lighting.app/Contents/MacOS/Keyboard Lighting
+            smoke: release/mac-universal/Keyboard Lighting.app/Contents/MacOS/Keyboard Lighting
           - os: ubuntu-latest
             target: --linux
             smoke: release/linux-unpacked/via-app
