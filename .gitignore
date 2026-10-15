@@ -4,3 +4,5 @@ release/
 build/icons/*.png
 !build/icons/icon.png
 *.log
+build/linux/*.generated.tpl
+linux-build.log

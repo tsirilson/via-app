@@ -7,17 +7,25 @@ Plug the keyboard in **with a USB cable**, click **Connect keyboard**, and pick
 it. Close the official VIA app or other configurators first so two apps don't
 send commands to the keyboard at the same time.
 
-## Install
+## Use it in the browser
 
-Installers are built by GitHub Actions on every push to `main` (download them
-from the run's **Artifacts**). Pushing a tag like `v0.2.0` also creates a draft
-GitHub Release with them attached.
+https://tsirilson.github.io/via-app/ in **Chrome or Edge** (Firefox and Safari
+don't support WebHID). Deployed automatically on every push to `main`.
+
+## Install the desktop app
+
+Download the installer for your system from the
+[latest release](https://github.com/tsirilson/via-app/releases/latest).
+
+The app keeps running in the background: on Windows and Linux, closing or
+minimizing it hides it to the system tray; on macOS it lives in the menu bar
+(no Dock icon). Use **Quit** in the tray/menu-bar menu to exit.
 
 | OS | File | Notes |
 |----|------|-------|
 | Windows | `Keyboard-Lighting-<version>-win-x64.exe` | Unsigned: SmartScreen shows "Windows protected your PC" → **More info → Run anyway**. |
 | macOS | `Keyboard-Lighting-<version>-mac-arm64.dmg` (Apple Silicon) or `-x64.dmg` (Intel) | Not notarized: the first time, right-click the app → **Open**, or allow it in **System Settings → Privacy & Security**. |
-| Linux | `.deb` (Debian/Ubuntu) or `.AppImage` | The `.deb` installs a udev rule so the app can access keyboards. For the AppImage, add it yourself (below). |
+| Linux | `.deb` (Debian/Ubuntu) or `.AppImage` | The `.deb` installs a udev rule so the app can access keyboards. For the AppImage, add it yourself (below). On Ubuntu 24.04+ the AppImage may need `--no-sandbox` (the `.deb` doesn't). GNOME needs the AppIndicator extension for the tray icon. |
 
 Linux keyboard access for the AppImage (one time):
 
@@ -55,8 +63,18 @@ npm run dist:win            # Windows installer → release/
 npm run dist:mac            # macOS .dmg (must run on a Mac)
 npm run dist:linux          # Linux AppImage + .deb (on Linux)
 npm run dist:linux:docker   # Linux AppImage + .deb from Windows/macOS via Docker
-npm run icon                # re-render build/icons/icon.png from icon.svg
+npm run icon                # re-render the app and tray icons from SVG
+npm run release:patch       # bump version, tag, push → GitHub builds a release
 ```
+
+### Releasing
+
+`npm run release:patch` (or `release:minor`) bumps the version in
+`package.json`, commits, tags it (e.g. `v0.2.1`) and pushes. The
+[Build installers](.github/workflows/build.yml) workflow then builds and
+smoke-tests all three platforms and publishes a GitHub Release with the
+installers and auto-generated notes. Builds on plain pushes to `main` are
+available as workflow artifacts.
 
 The desktop app is the same web app inside Electron
 ([electron/main.cjs](electron/main.cjs)): it serves `dist/` from a private

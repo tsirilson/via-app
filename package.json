@@ -1,7 +1,7 @@
 {
   "name": "via-app",
   "productName": "Keyboard Lighting",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Control the lighting on QMK/VIA keyboards",
   "author": {
     "name": "David Tsirilson",
@@ -22,8 +22,10 @@
     "electron:smoke": "npm run build && node scripts/smoke.mjs",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:linux": "npm run build && electron-builder --linux",
-    "dist:linux:docker": "npm run build && node scripts/build-linux-docker.mjs"
+    "dist:linux": "npm run build && node scripts/linux-package-scripts.cjs && electron-builder --linux",
+    "dist:linux:docker": "npm run build && node scripts/build-linux-docker.mjs",
+    "release:patch": "npm version patch -m \"Release %s\" && git push --follow-tags",
+    "release:minor": "npm version minor -m \"Release %s\" && git push --follow-tags"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
@@ -76,7 +78,10 @@
         }
       ],
       "category": "public.app-category.utilities",
-      "identity": "-"
+      "identity": "-",
+      "extendInfo": {
+        "LSUIElement": true
+      }
     },
     "linux": {
       "target": [
@@ -98,8 +103,8 @@
       "synopsis": "Control the lighting on QMK/VIA keyboards"
     },
     "deb": {
-      "afterInstall": "build/linux/after-install.sh",
-      "afterRemove": "build/linux/after-remove.sh"
+      "afterInstall": "build/linux/after-install.generated.tpl",
+      "afterRemove": "build/linux/after-remove.generated.tpl"
     }
   }
 }

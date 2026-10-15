@@ -1,8 +1,9 @@
 name: Build installers
 
 # Runs the tests, builds installers for Windows, macOS and Linux, and smoke-tests
-# each packaged app against the simulated keyboard. Pushing a tag like v0.2.0
-# also publishes the installers as a GitHub Release.
+# each packaged app against the simulated keyboard. Pushing a version tag
+# (`npm run release:patch`, or `git tag v0.2.0 && git push --tags`) also
+# publishes a GitHub Release with the installers attached.
 
 on:
   push:
@@ -42,6 +43,9 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Generate Linux package scripts
+        if: runner.os == 'Linux'
+        run: node scripts/linux-package-scripts.cjs
       - run: npx electron-builder ${{ matrix.target }} --publish never
 
       - name: Smoke test (Windows / macOS)
@@ -49,7 +53,9 @@ jobs:
         run: node scripts/smoke.mjs "${{ matrix.smoke }}"
       - name: Smoke test (Linux, virtual display)
         if: runner.os == 'Linux'
-        run: xvfb-run -a node scripts/smoke.mjs "${{ matrix.smoke }}"
+        # The unpacked app isn't installed, so Ubuntu 24's AppArmor blocks
+        # Chromium's sandbox (SIGTRAP). The .deb installs a profile for users.
+        run: xvfb-run -a node scripts/smoke.mjs "${{ matrix.smoke }}" --no-sandbox
 
       - uses: actions/upload-artifact@v4
         with:
@@ -70,7 +76,10 @@ jobs:
         with:
           path: installers
           merge-multiple: true
+      # One job creates the release and attaches everything, so the three build
+      # jobs can't race to create duplicate releases for the same tag.
       - uses: softprops/action-gh-release@v2
         with:
           files: installers/*
-          draft: true
+          generate_release_notes: true
+          make_latest: true

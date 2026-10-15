@@ -1,13 +1,13 @@
 // Starts the Electron app with the simulated keyboard and checks that it
 // connects. Usage:
 //   node scripts/smoke.mjs                 (unpackaged, runs ./dist)
-//   node scripts/smoke.mjs <path-to-app>   (a packaged executable)
+//   node scripts/smoke.mjs <path-to-app> [extra args]   (a packaged executable)
 import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
 
 const require = createRequire(import.meta.url);
 const exe = process.argv[2] ?? require('electron');
-const args = process.argv[2] ? [] : ['.'];
+const args = process.argv[2] ? process.argv.slice(3) : ['.'];
 
 const result = spawnSync(exe, args, {
   env: {...process.env, VIA_APP_SMOKE: '1', ELECTRON_ENABLE_LOGGING: '0'},
