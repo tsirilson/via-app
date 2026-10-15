@@ -2,20 +2,33 @@ import {ViaClient, type LogEntry} from '../protocol/client';
 import {CHANNEL, decodeNumber, encodeNumber, hex} from '../protocol/encoding';
 import {MockFirmware} from '../protocol/mockFirmware';
 import {WebHidTransport, isWebHidAvailable} from '../protocol/transport';
-import {channelsOf, dataLength, type Control, type LightingModel} from '../definitions/model';
+import {channelsOf, dataLength, type Control, type LightingModel, type Zone} from '../definitions/model';
 import {adaptToFirmware, fitLegacySpeedRange, fromDefinition, fromProbe} from '../definitions/normalize';
 import {definitionMatches, resolveDefinition, vendorProductId} from '../definitions/resolve';
 import {evaluateShowIf} from '../definitions/showIf';
 import {hexToHs, hsToHex} from './color';
 
 const SOURCE_LABEL: Record<LightingModel['source'], string> = {
-  vial: 'from the keyboard (Vial)',
-  bundled: 'bundled with this app',
+  vial: 'From the keyboard (Vial)',
+  bundled: 'Bundled with this app',
   'via-hosted-v3': "VIA's library (v3)",
   'via-hosted-v2': "VIA's library (v2)",
-  file: 'loaded from file',
-  probe: 'none found — generic controls',
+  file: 'Loaded from file',
+  probe: 'None found — generic controls',
 };
+
+/** Quick colors, as QMK hue/saturation (0-255). */
+const SWATCHES: {name: string; hs: [number, number]}[] = [
+  {name: 'Red', hs: [0, 255]},
+  {name: 'Orange', hs: [21, 255]},
+  {name: 'Yellow', hs: [43, 255]},
+  {name: 'Green', hs: [85, 255]},
+  {name: 'Cyan', hs: [128, 255]},
+  {name: 'Blue', hs: [170, 255]},
+  {name: 'Purple', hs: [191, 255]},
+  {name: 'Pink', hs: [234, 200]},
+  {name: 'White', hs: [0, 0]},
+];
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -30,6 +43,8 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+type ColorMap = Record<string, [number, number]>;
+
 interface Session {
   client: ViaClient;
   channels: number[];
@@ -38,35 +53,56 @@ interface Session {
   model: LightingModel;
   /** Numeric values by value_key (colors store hue here for showIf). */
   values: Record<string, number>;
-  colors: Record<string, [number, number]>;
+  colors: ColorMap;
   warnings: string[];
-  /** What the keyboard had when connected, for Undo. */
-  original: {values: Record<string, number>; colors: Record<string, [number, number]>};
+  /** Last known saved state (on connect, then after each Save), for Undo. */
+  original: {values: Record<string, number>; colors: ColorMap};
+  dirty: boolean;
 }
 
 export class App {
   private session?: Session;
-  private status = el('p', {class: 'status'});
+  private connection = el('div', {class: 'connection'});
+  private status = el('div', {class: 'status', role: 'status'});
   private main = el('main');
+  private actionbar = el('footer', {class: 'actionbar', hidden: true});
   private log = el('pre', {class: 'log'});
   private logLines: string[] = [];
   private pending = new Map<string, number[]>();
   private inFlight = new Set<string>();
+  private statusTimer?: number;
 
   constructor(private root: HTMLElement) {}
 
   start() {
     this.root.append(
-      el('header', {}, el('h1', {}, 'Keyboard Lighting'), this.status),
+      el('header', {class: 'topbar'},
+        el('div', {class: 'brand'}, el('span', {class: 'brand-mark', ariaHidden: 'true'}), 'Keyboard Lighting'),
+        this.connection,
+      ),
       this.main,
-      el('details', {class: 'log-panel'}, el('summary', {}, 'Raw HID log'), this.log),
+      this.actionbar,
+      this.status,
     );
     this.renderDisconnected();
   }
 
-  private setStatus(text: string, kind: 'info' | 'error' = 'info') {
+  // ---------------------------------------------------------------- status
+
+  private setStatus(text: string, kind: 'info' | 'error' | 'success' = 'info') {
     this.status.textContent = text;
     this.status.dataset.kind = kind;
+    this.status.classList.add('visible');
+    clearTimeout(this.statusTimer);
+    this.statusTimer = window.setTimeout(
+      () => this.status.classList.remove('visible'),
+      kind === 'error' ? 7000 : 3000,
+    );
+  }
+
+  private setConnection(state: 'disconnected' | 'connecting' | 'connected', label: string) {
+    this.connection.dataset.state = state;
+    this.connection.replaceChildren(el('span', {class: 'dot'}), el('span', {}, label));
   }
 
   private appendLog(e: LogEntry) {
@@ -77,22 +113,34 @@ export class App {
     this.log.textContent = this.logLines.join('\n');
   }
 
+  // ---------------------------------------------------------- disconnected
+
   private renderDisconnected() {
-    this.main.replaceChildren();
+    this.actionbar.hidden = true;
+    this.setConnection('disconnected', 'Not connected');
+    const art = el('div', {class: 'empty-art', ariaHidden: 'true'}, el('div', {class: 'keycap'}));
+
     if (!isWebHidAvailable()) {
-      this.setStatus('This browser has no WebHID. Use Chrome or Edge on desktop.', 'error');
+      this.main.replaceChildren(
+        el('section', {class: 'empty'}, art,
+          el('h1', {}, 'This browser can’t talk to keyboards'),
+          el('p', {}, 'Open this page in Chrome or Edge on a desktop computer, or use the desktop app.')),
+      );
       return;
     }
-    this.setStatus('Plug your keyboard in with a USB cable, then connect.');
-    const button = el('button', {class: 'primary', textContent: 'Connect keyboard'});
-    button.addEventListener('click', () => this.connect());
-    this.main.append(
-      el('section', {class: 'card center'}, button,
-        el('p', {class: 'hint'}, 'Works with keyboards running QMK with VIA or Vial enabled.')),
+
+    const button = el('button', {class: 'primary large', textContent: 'Connect keyboard'});
+    button.addEventListener('click', () => this.connect(button));
+    this.main.replaceChildren(
+      el('section', {class: 'empty'}, art,
+        el('h1', {}, 'Connect your keyboard'),
+        el('p', {}, 'Plug it in with a USB cable, then connect. Works with keyboards running QMK with VIA or Vial.'),
+        button),
     );
   }
 
-  private async connect() {
+  private async connect(button: HTMLButtonElement) {
+    button.disabled = true;
     try {
       const mock = new URLSearchParams(location.search).get('mock');
       const transport = mock !== null ? mockKeyboard(mock) : await WebHidTransport.request();
@@ -107,21 +155,23 @@ export class App {
       });
       await this.setUp(new ViaClient(transport));
     } catch (e) {
+      this.setConnection('disconnected', 'Not connected');
       this.setStatus(`Couldn't connect: ${(e as Error).message}`, 'error');
+    } finally {
+      button.disabled = false;
     }
   }
 
   private async setUp(client: ViaClient) {
     client.onLog((e) => this.appendLog(e));
     const t = client.transport;
-    this.setStatus(`Talking to ${t.productName}…`);
+    this.setConnection('connecting', `Connecting to ${t.productName}…`);
 
     await client.handshake();
     const vial = await client.detectVial().catch(() => undefined);
     const firmwareVersion = await client.getFirmwareVersion().catch(() => undefined);
     const channels = await client.probeLightingChannels();
 
-    this.setStatus('Looking for a keyboard definition…');
     const resolved = await resolveDefinition(t.vendorId, t.productId, {
       baseUrl: import.meta.env.BASE_URL,
     });
@@ -131,7 +181,8 @@ export class App {
 
     this.session = {
       client, channels, vial, firmwareVersion,
-      model: base, values: {}, colors: {}, warnings: [], original: {values: {}, colors: {}},
+      model: base, values: {}, colors: {}, warnings: [],
+      original: {values: {}, colors: {}}, dirty: false,
     };
     await this.applyModel(base);
   }
@@ -155,12 +206,16 @@ export class App {
     await this.readValues();
     // Keep the first snapshot, so loading a definition file later doesn't
     // replace "what the keyboard had" with already-changed values.
-    if (!Object.keys(s.original.values).length) {
-      s.original = {values: {...s.values}, colors: {...s.colors}};
-    }
+    if (!Object.keys(s.original.values).length) this.snapshot();
     if (s.client.format === 'legacy') s.model = fitLegacySpeedRange(s.model, s.values);
     this.render();
-    this.setStatus(`Connected to ${s.model.name}.`);
+    this.setConnection('connected', s.model.name);
+    this.setStatus(`Connected to ${s.model.name}.`, 'success');
+  }
+
+  private snapshot() {
+    const s = this.session!;
+    s.original = {values: {...s.values}, colors: {...s.colors}};
   }
 
   private async readValues() {
@@ -184,14 +239,109 @@ export class App {
     }
   }
 
+  // ------------------------------------------------------------- connected
+
   private render() {
+    const s = this.session!;
+    const notices = [...s.warnings];
+    if (s.model.genericNames) {
+      notices.push("Effect names are VIA's generic list and may not match this keyboard. Load the maker's definition file (Keyboard details below) for accurate names.");
+    }
+
+    this.main.replaceChildren(
+      ...s.model.zones.map((z) => this.renderZone(z)),
+      ...notices.map((n) => el('p', {class: 'notice'}, n)),
+      this.renderDetails(),
+    );
+    this.renderActionbar();
+    this.refresh();
+  }
+
+  private renderZone(zone: Zone): HTMLElement {
+    const preview = el('div', {class: 'preview'},
+      el('div', {class: 'preview-glow'}),
+      el('div', {class: 'preview-text'},
+        el('span', {class: 'preview-label'}, zone.label),
+        el('strong', {class: 'preview-effect'}),
+        el('span', {class: 'preview-meta'})),
+    );
+    const section = el('section', {class: 'zone'}, preview,
+      el('div', {class: 'controls'}, ...zone.controls.map((c) => this.renderControl(c))));
+    section.dataset.zone = zone.label;
+    return section;
+  }
+
+  private renderControl(c: Control): HTMLElement {
+    const s = this.session!;
+    const wrap = el('div', {class: `control control-${c.type}`});
+    wrap.dataset.key = c.key;
+    const label = el('span', {class: 'control-label'}, c.label);
+    const value = el('span', {class: 'control-value'});
+    const head = el('div', {class: 'control-head'}, label, value);
+
+    if (c.type === 'dropdown') {
+      const current = s.values[c.key] ?? 0;
+      const options = c.options.some((o) => o.value === current)
+        ? c.options
+        : [...c.options, {label: `Unknown (${current})`, value: current}];
+      const isEffect = /effect/i.test(c.key) || /effect/i.test(c.label);
+      if (isEffect || options.length <= 8) {
+        const grid = el('div', {class: 'chips', role: 'radiogroup', ariaLabel: c.label});
+        for (const o of options) {
+          const chip = el('button', {
+            class: 'chip',
+            type: 'button',
+            role: 'radio',
+            textContent: isEffect && o.value === 0 ? 'Off' : o.label,
+          });
+          chip.dataset.value = String(o.value);
+          chip.addEventListener('click', () => this.change(c, o.value));
+          grid.append(chip);
+        }
+        wrap.append(head, grid);
+      } else {
+        const select = el('select', {ariaLabel: c.label});
+        select.append(...options.map((o) => el('option', {value: String(o.value), textContent: o.label})));
+        select.value = String(current);
+        select.addEventListener('change', () => this.change(c, Number(select.value)));
+        wrap.append(head, select);
+      }
+    } else if (c.type === 'color') {
+      const row = el('div', {class: 'swatches'});
+      for (const sw of SWATCHES) {
+        const b = el('button', {class: 'swatch', type: 'button', title: sw.name, ariaLabel: sw.name});
+        b.style.setProperty('--swatch', hsToHex(...sw.hs));
+        b.dataset.hs = sw.hs.join(',');
+        b.addEventListener('click', () => this.setColor(c, sw.hs));
+        row.append(b);
+      }
+      const picker = el('input', {type: 'color', ariaLabel: 'Custom color'});
+      picker.addEventListener('input', () => this.setColor(c, hexToHs(picker.value)));
+      row.append(el('label', {class: 'swatch custom', title: 'Custom color'}, picker));
+      wrap.append(head, row);
+    } else if (c.type === 'toggle') {
+      const box = el('input', {type: 'checkbox', role: 'switch', ariaLabel: c.label});
+      box.addEventListener('change', () => this.change(c, box.checked ? c.max : c.min));
+      wrap.append(el('label', {class: 'switch'}, label, box));
+    } else {
+      const range = el('input', {
+        type: 'range', min: String(c.min), max: String(c.max), ariaLabel: c.label,
+      });
+      range.addEventListener('input', () => this.change(c, Number(range.value)));
+      wrap.append(head, range);
+    }
+    return wrap;
+  }
+
+  private renderDetails(): HTMLElement {
     const s = this.session!;
     const t = s.client.transport;
     const firmware = s.vial
       ? `Vial (VIA protocol ${s.client.protocolVersion}${s.vial.vialRgb ? ', VialRGB' : ''})`
       : `VIA protocol ${s.client.protocolVersion} (${s.client.format} format)`;
 
-    const identify = el('button', {textContent: 'Identify'});
+    const identify = el('button', {type: 'button', textContent: 'Identify'});
+    identify.title = 'Flash the keyboard’s lights';
     identify.addEventListener('click', async () => {
       identify.disabled = true;
       const ok = await s.client.identify().catch(() => false);
@@ -201,102 +351,38 @@ export class App {
 
     const fileInput = el('input', {type: 'file', accept: '.json,application/json', hidden: true});
     fileInput.addEventListener('change', () => this.loadFile(fileInput.files?.[0]));
-    const loadButton = el('button', {textContent: 'Load definition file…'});
+    const loadButton = el('button', {type: 'button', textContent: 'Load definition file…'});
     loadButton.addEventListener('click', () => fileInput.click());
 
-    const info = el('section', {class: 'card'},
-      el('h2', {}, s.model.name),
+    return el('details', {class: 'details'},
+      el('summary', {}, 'Keyboard details'),
       el('dl', {},
         el('dt', {}, 'Device'), el('dd', {}, `${t.productName} · ${vid(t.vendorId)}:${vid(t.productId)} (VPID ${vendorProductId(t.vendorId, t.productId)})`),
         el('dt', {}, 'Firmware'), el('dd', {}, firmware),
-        el('dt', {}, 'Lighting channels'), el('dd', {}, s.channels.length
+        el('dt', {}, 'Lighting'), el('dd', {}, s.channels.length
           ? s.channels.map((ch) => channelName(ch, s.client.format === 'legacy')).join(', ')
           : 'none'),
         el('dt', {}, 'Definition'), el('dd', {}, SOURCE_LABEL[s.model.source]),
       ),
       el('div', {class: 'row'}, identify, loadButton, fileInput),
+      el('details', {class: 'log-panel'}, el('summary', {}, 'Raw HID log'), this.log),
     );
+  }
 
-    const notices = [...s.warnings];
-    if (s.model.genericNames) {
-      notices.push("Effect names are VIA's generic list and may not match this keyboard. Load the maker's definition file for accurate names.");
-    }
-
-    const zones = s.model.zones.map((z) =>
-      el('section', {class: 'card zone'}, el('h3', {}, z.label), ...z.controls.map((c) => this.renderControl(c))),
-    );
-
-    const save = el('button', {class: 'primary', textContent: 'Save to keyboard'});
-    save.addEventListener('click', () => this.save(save));
-    const undo = el('button', {textContent: 'Undo changes'});
+  private renderActionbar() {
+    const undo = el('button', {type: 'button', textContent: 'Undo changes'});
     undo.addEventListener('click', () => this.undo(undo));
-
-    this.main.replaceChildren(
-      info,
-      ...notices.map((n) => el('p', {class: 'notice'}, n)),
-      ...zones,
-      ...(zones.length ? [el('div', {class: 'row end'},
-        el('span', {class: 'hint'},
-          "Changes apply instantly and aren't saved until you click Save. But pressing the keyboard's own lighting keys saves everything, including these changes."),
-        undo, save)] : []),
+    const save = el('button', {type: 'button', class: 'primary', textContent: 'Save to keyboard'});
+    save.addEventListener('click', () => this.save(save));
+    this.actionbar.replaceChildren(
+      el('div', {class: 'actionbar-text'}, el('strong'), el('span')),
+      el('div', {class: 'row'}, undo, save),
     );
-    this.updateVisibility();
+    this.actionbar.hidden = !this.session?.model.zones.length;
   }
 
-  private renderControl(c: Control): HTMLElement {
-    const s = this.session!;
-    const wrap = el('label', {class: 'control'});
-    wrap.dataset.key = c.key;
-    const name = el('span', {class: 'label'}, c.label);
-    const value = el('span', {class: 'value'});
-
-    let input: HTMLInputElement | HTMLSelectElement;
-    if (c.type === 'dropdown') {
-      const select = el('select');
-      const current = s.values[c.key] ?? 0;
-      const options = c.options.some((o) => o.value === current)
-        ? c.options
-        : [...c.options, {label: `Unknown (${current})`, value: current}];
-      select.append(...options.map((o) => el('option', {value: String(o.value), textContent: o.label})));
-      select.value = String(current);
-      select.addEventListener('change', () => this.change(c, Number(select.value)));
-      input = select;
-    } else if (c.type === 'color') {
-      const [h, sat] = s.colors[c.key] ?? [0, 255];
-      const picker = el('input', {type: 'color', value: hsToHex(h, sat)});
-      value.textContent = `H ${h} · S ${sat}`;
-      picker.addEventListener('input', () => {
-        const [nh, ns] = hexToHs(picker.value);
-        value.textContent = `H ${nh} · S ${ns}`;
-        s.colors[c.key] = [nh, ns];
-        this.change(c, nh, [nh, ns]);
-      });
-      input = picker;
-    } else if (c.type === 'toggle') {
-      const box = el('input', {type: 'checkbox', checked: (s.values[c.key] ?? c.min) === c.max});
-      box.addEventListener('change', () => this.change(c, box.checked ? c.max : c.min));
-      input = box;
-    } else {
-      const range = el('input', {
-        type: 'range', min: String(c.min), max: String(c.max),
-        value: String(s.values[c.key] ?? c.min),
-      });
-      const show = () => {
-        const v = Number(range.value);
-        value.textContent = c.max === 255 ? `${Math.round((v / 255) * 100)}%` : String(v);
-      };
-      show();
-      range.addEventListener('input', () => {
-        show();
-        this.change(c, Number(range.value));
-      });
-      input = range;
-    }
-    wrap.append(el('span', {class: 'head'}, name, value), input);
-    return wrap;
-  }
-
-  private updateVisibility() {
+  /** Syncs every control, the previews and the action bar with session state. */
+  private refresh() {
     const s = this.session!;
     for (const z of s.model.zones) {
       for (const c of z.controls) {
@@ -309,15 +395,110 @@ export class App {
           visible = true;
         }
         node.hidden = !visible;
+        this.syncControl(c, node);
       }
+      this.syncPreview(z);
     }
+
+    const [title, detail] = this.actionbar.querySelectorAll<HTMLElement>('.actionbar-text > *');
+    const buttons = this.actionbar.querySelectorAll<HTMLButtonElement>('button');
+    this.actionbar.classList.toggle('dirty', s.dirty);
+    if (title) {
+      title.textContent = s.dirty ? 'Unsaved changes' : 'Saved on the keyboard';
+      detail.textContent = s.dirty
+        ? 'Lost when unplugged. Pressing the keyboard’s own lighting keys also saves them.'
+        : 'What you see is what the keyboard keeps.';
+    }
+    buttons.forEach((b) => (b.disabled = !s.dirty));
+  }
+
+  private syncControl(c: Control, node: HTMLElement) {
+    const s = this.session!;
+    const v = s.values[c.key] ?? c.min;
+    const value = node.querySelector<HTMLElement>('.control-value');
+    if (c.type === 'range') {
+      const range = node.querySelector<HTMLInputElement>('input[type=range]')!;
+      if (Number(range.value) !== v) range.value = String(v);
+      const pct = c.max > c.min ? ((v - c.min) / (c.max - c.min)) * 100 : 0;
+      range.style.setProperty('--pct', `${pct}%`);
+      if (value) value.textContent = c.max === 255 ? `${Math.round(pct)}%` : String(v);
+    } else if (c.type === 'dropdown') {
+      node.querySelectorAll<HTMLButtonElement>('.chip').forEach((chip) =>
+        chip.setAttribute('aria-checked', String(Number(chip.dataset.value) === v)),
+      );
+      const select = node.querySelector('select');
+      if (select) select.value = String(v);
+      if (value) value.textContent = '';
+    } else if (c.type === 'color') {
+      const [h, sat] = s.colors[c.key] ?? [0, 255];
+      node.querySelectorAll<HTMLButtonElement>('.swatch[data-hs]').forEach((b) => {
+        const [bh, bs] = b.dataset.hs!.split(',').map(Number);
+        const match = (bs === 0 && sat < 12) || (Math.abs(bh - h) <= 3 && Math.abs(bs - sat) <= 12);
+        b.setAttribute('aria-pressed', String(match));
+      });
+      const picker = node.querySelector<HTMLInputElement>('input[type=color]')!;
+      picker.value = hsToHex(h, sat);
+      node.querySelector<HTMLElement>('.swatch.custom')!.style.setProperty('--swatch', hsToHex(h, sat));
+      if (value) value.textContent = colorName(h, sat);
+    } else if (c.type === 'toggle') {
+      node.querySelector<HTMLInputElement>('input')!.checked = v === c.max;
+    }
+  }
+
+  /** The glowing preview card: color, effect name, brightness/speed summary. */
+  private syncPreview(zone: Zone) {
+    const s = this.session!;
+    const section = this.main.querySelector<HTMLElement>(`[data-zone="${CSS.escape(zone.label)}"]`);
+    if (!section) return;
+    const find = (re: RegExp, type?: string) =>
+      zone.controls.find((c) => re.test(c.key) && (!type || c.type === type));
+    const effect = find(/effect$/, 'dropdown') ?? zone.controls.find((c) => c.type === 'dropdown');
+    const brightness = find(/brightness/, 'range');
+    const speed = find(/speed/, 'range');
+    const color = zone.controls.find((c) => c.type === 'color');
+
+    const effectValue = effect ? s.values[effect.key] ?? 0 : 1;
+    const off = effect !== undefined && effectValue === 0;
+    const effectName = effect?.options.find((o) => o.value === effectValue)?.label ?? `Effect ${effectValue}`;
+    const visible = (c?: Control) => {
+      if (!c) return false;
+      try {
+        return c.showIf ? evaluateShowIf(c.showIf, s.values) : true;
+      } catch {
+        return true;
+      }
+    };
+    const pct = (c?: Control) =>
+      c ? Math.round(((s.values[c.key] ?? c.min) - c.min) / Math.max(1, c.max - c.min) * 100) : 100;
+
+    const solid = color && visible(color);
+    const [h, sat] = color ? s.colors[color.key] ?? [0, 255] : [0, 0];
+    section.style.setProperty('--glow', solid ? hsToHex(h, sat) : 'transparent');
+    section.style.setProperty('--glow-strength', String(off ? 0 : 0.25 + (pct(brightness) / 100) * 0.75));
+    section.style.setProperty('--spin', `${Math.max(2, 16 - (pct(speed) / 100) * 14)}s`);
+    section.classList.toggle('rainbow', !off && !solid);
+    section.classList.toggle('off', off);
+
+    section.querySelector('.preview-effect')!.textContent = off ? 'Lights off' : effectName;
+    const meta: string[] = [];
+    if (brightness && !off) meta.push(`Brightness ${pct(brightness)}%`);
+    if (speed && visible(speed) && !off) meta.push(`Speed ${pct(speed)}%`);
+    section.querySelector('.preview-meta')!.textContent = meta.join(' · ');
+  }
+
+  // --------------------------------------------------------------- actions
+
+  private setColor(c: Control, hs: [number, number]) {
+    this.session!.colors[c.key] = hs;
+    this.change(c, hs[0], hs);
   }
 
   /** Live apply: always send the latest value, never more than one in flight per control. */
   private change(c: Control, numeric: number, color?: [number, number]) {
     const s = this.session!;
     s.values[c.key] = numeric;
-    this.updateVisibility();
+    s.dirty = true;
+    this.refresh();
     this.pending.set(c.key, color ?? encodeNumber(numeric, c.max));
     void this.flush(c);
   }
@@ -339,7 +520,7 @@ export class App {
     }
   }
 
-  /** Sends back every value the keyboard had when the app connected. */
+  /** Sends back the last saved values (as read on connect, or since the last Save). */
   private async undo(button: HTMLButtonElement) {
     const s = this.session!;
     button.disabled = true;
@@ -354,8 +535,9 @@ export class App {
       }
       s.values = {...s.original.values};
       s.colors = {...s.original.colors};
-      this.render();
-      this.setStatus('Restored the settings the keyboard had when you connected.');
+      s.dirty = false;
+      this.refresh();
+      this.setStatus('Changes undone.', 'success');
     } catch (e) {
       this.setStatus(`Undo failed: ${(e as Error).message}`, 'error');
       button.disabled = false;
@@ -368,10 +550,12 @@ export class App {
     try {
       const channels = s.client.format === 'legacy' ? [0] : channelsOf(s.model);
       for (const ch of channels) await s.client.save(ch);
-      this.setStatus('Saved to the keyboard.');
+      this.snapshot();
+      s.dirty = false;
+      this.refresh();
+      this.setStatus('Saved to the keyboard.', 'success');
     } catch (e) {
       this.setStatus(`Save failed: ${(e as Error).message}`, 'error');
-    } finally {
       button.disabled = false;
     }
   }
@@ -433,4 +617,15 @@ function channelName(ch: number, legacy: boolean) {
       [CHANNEL.ledMatrix]: 'Per-key LED (5)',
     }[ch] ?? `Channel ${ch}`
   );
+}
+
+/** A friendly name for a QMK hue/saturation pair. */
+function colorName(h: number, sat: number): string {
+  if (sat < 40) return 'White';
+  const names: [number, string][] = [
+    [10, 'Red'], [32, 'Orange'], [55, 'Yellow'], [75, 'Lime'], [105, 'Green'],
+    [140, 'Cyan'], [180, 'Blue'], [205, 'Purple'], [240, 'Pink'], [256, 'Red'],
+  ];
+  const name = names.find(([max]) => h < max)![1];
+  return sat < 160 ? `Pale ${name.toLowerCase()}` : name;
 }
