@@ -28,15 +28,15 @@
     "release:minor": "npm version minor -m \"Release %s\" && git push --follow-tags"
   },
   "devDependencies": {
-    "@resvg/resvg-js": "^2.6.2",
-    "@the-via/reader": "^1.14.4",
-    "@types/node": "^26.6.5",
-    "@types/w3c-web-hid": "^1.0.7",
-    "electron": "^44.7.2",
-    "electron-builder": "^26.15.3",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.4",
-    "vitest": "^5.0.4"
+    "@resvg/resvg-js": "2.6.2",
+    "@the-via/reader": "1.14.4",
+    "@types/node": "26.6.5",
+    "@types/w3c-web-hid": "1.0.7",
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
   },
   "build": {
     "appId": "io.github.tsirilson.keyboard-lighting",
